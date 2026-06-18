@@ -1,16 +1,38 @@
-import os
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-load_dotenv()
+from agents.graph import agent_graph
+
 
 class ConversationAgent:
-    def __init__(self):
-        self.llm = ChatOpenAI(
-            model="gpt-5.4-mini-2026-03-17",
-            temperature=0.5,
-            api_key=os.getenv("OPENAI_API_KEY"),
-        )
+    """
+    Thin wrapper around the LangGraph agent.
+    Keeps the same .chat() interface that main.py already uses,
+    but now accepts student_id and chat_history for personalisation.
+    """
 
-    def chat(self, message: str) -> str:
-        response = self.llm.invoke(message)
-        return response.content
+    def chat(
+        self,
+        message: str,
+        student_id: str = "",
+        chat_history: list[dict] = None,
+    ) -> str:
+        """
+        Run the agent graph and return the response string.
+
+        Args:
+            message:       The student's latest message.
+            student_id:    The selected student's ID (empty string if none selected).
+            chat_history:  List of {"role": "user"/"assistant", "content": "..."} dicts.
+        """
+        if chat_history is None:
+            chat_history = []
+
+        initial_state = {
+            "student_id": student_id,
+            "user_message": message,
+            "chat_history": chat_history,
+            "needs_data": False,
+            "student_context": None,
+            "response": "",
+        }
+
+        final_state = agent_graph.invoke(initial_state)
+        return final_state["response"]
