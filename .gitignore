@@ -1,0 +1,6 @@
+.env
+credentials.json
+.venv/
+test.ipynb
+SETUP_GUIDE 3.md
+agents/__pycache__/
