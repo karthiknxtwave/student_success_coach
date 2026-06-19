@@ -14,9 +14,10 @@ SCOPES = [
 
 
 def _get_client() -> gspread.Client:
-    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-    creds_dict = json.loads(creds_json)
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=SCOPES,
+    )
     return gspread.authorize(creds)
 
 
