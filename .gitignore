@@ -4,3 +4,4 @@ credentials.json
 test.ipynb
 SETUP_GUIDE 3.md
 __pycache__/
+.streamlit/
