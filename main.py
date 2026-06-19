@@ -11,7 +11,6 @@ st.set_page_config(
 st.title("🎓 Success Coach AI")
 st.caption("Your personal academic assistant.")
 
-
 # --------------------------------------------------------------------------- #
 #  Sidebar — Student Selector
 # --------------------------------------------------------------------------- #
