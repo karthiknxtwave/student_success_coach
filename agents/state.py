@@ -9,4 +9,6 @@ class AgentState(TypedDict):
     route: str                        # "general" | "student_data" | "knowledge_base" | "both"
     student_context: Optional[dict]
     knowledge_context: Optional[str]  # Retrieved RAG chunks as a single string
+    memories: Optional[str]           # Long-term facts retrieved from Mem0
+    recent_summaries: Optional[str]   # Last 3 session summaries retrieved from Mem0
     response: str

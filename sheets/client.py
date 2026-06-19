@@ -33,6 +33,7 @@ def _get_spreadsheet() -> gspread.Spreadsheet:
 
 def fetch_roster(student_id: str) -> dict | None:
     """Return the roster row for a given student_id, or None if not found."""
+    print("fetching roster row")
     sheet = _get_spreadsheet().worksheet("roster")
     records = sheet.get_all_records()
     for row in records:
@@ -43,12 +44,14 @@ def fetch_roster(student_id: str) -> dict | None:
 
 def fetch_all_students() -> list[dict]:
     """Return all students from the roster sheet."""
+    print("fetching students list")
     sheet = _get_spreadsheet().worksheet("roster")
     return sheet.get_all_records()
 
 
 def fetch_exam_scores(student_id: str) -> list[dict]:
     """Return all exam score rows for a student, sorted by date descending."""
+    print("fetching exam scores for the student")
     sheet = _get_spreadsheet().worksheet("exam_scores")
     records = sheet.get_all_records()
     scores = [r for r in records if str(r["student_id"]) == str(student_id)]
@@ -58,6 +61,7 @@ def fetch_exam_scores(student_id: str) -> list[dict]:
 
 def fetch_attendance(student_id: str) -> list[dict]:
     """Return all attendance rows for a student, sorted by week descending."""
+    print("fetching student attendance data")
     sheet = _get_spreadsheet().worksheet("attendance")
     records = sheet.get_all_records()
     rows = [r for r in records if str(r["student_id"]) == str(student_id)]
@@ -67,6 +71,7 @@ def fetch_attendance(student_id: str) -> list[dict]:
 
 def fetch_exam_schedule(student_id: str) -> list[dict]:
     """Return upcoming exams for a student with days_remaining calculated."""
+    print("fetching exam schedule")
     sheet = _get_spreadsheet().worksheet("exam_schedule")
     records = sheet.get_all_records()
     today = date.today()
@@ -125,6 +130,8 @@ def build_student_context(student_id: str) -> dict | None:
         }
 
     upcoming_exams = fetch_exam_schedule(student_id)
+
+    print("fetched complete student data")
 
     return {
         "student_id": student_id,

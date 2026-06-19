@@ -17,7 +17,8 @@ def generate_response(state: AgentState) -> AgentState:
     """
     Final node: Generate the LLM response.
 
-    Prompt is selected based on whichever context is available:
+    Prompt is selected based on whichever context is available.
+    Memory (facts + summaries) is appended to whichever prompt is chosen.
 
       student_context=None,  knowledge_context=None  → build_general_prompt
       student_context={...}, knowledge_context=None  → build_data_prompt
@@ -32,21 +33,29 @@ def generate_response(state: AgentState) -> AgentState:
 
     student_context = state.get("student_context")
     knowledge_context = state.get("knowledge_context")
+    memories = state.get("memories")
+    recent_summaries = state.get("recent_summaries")
 
     # --- Select the right prompt based on available context ---
     if student_context and knowledge_context:
-        system_prompt = build_combined_prompt(student_context, knowledge_context)
+        system_prompt = build_combined_prompt(
+            student_context, knowledge_context, memories, recent_summaries
+        )
 
     elif student_context:
-        system_prompt = build_data_prompt(student_context)
+        system_prompt = build_data_prompt(
+            student_context, memories, recent_summaries
+        )
 
     elif knowledge_context:
-        student_name = None
-        system_prompt = build_knowledge_prompt(knowledge_context, student_name)
+        system_prompt = build_knowledge_prompt(
+            knowledge_context, None, memories, recent_summaries
+        )
 
     else:
-        student_name = None
-        system_prompt = build_general_prompt(student_name)
+        system_prompt = build_general_prompt(
+            None, memories, recent_summaries
+        )
 
     # --- Build message history for multi-turn memory ---
     messages = [SystemMessage(content=system_prompt)]
@@ -58,6 +67,7 @@ def generate_response(state: AgentState) -> AgentState:
             messages.append(AIMessage(content=turn["content"]))
 
     messages.append(HumanMessage(content=state["user_message"]))
-    # print(messages)
+    print("generating final response")
     result = llm.invoke(messages)
+    print("final response generated")
     return {**state, "response": result.content}

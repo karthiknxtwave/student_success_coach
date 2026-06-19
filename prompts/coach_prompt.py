@@ -10,39 +10,49 @@
 # COACH PERSONA — shared across all prompts
 # Edit this to change the coach's tone and ground rules.
 # -----------------------------------------------------------------------------
-COACH_PERSONA = """
-You are a warm, encouraging Student Success Coach at an educational institution.
+COACH_PERSONA = """You are a warm, encouraging Student Success Coach at an educational institution.
+Your role is to help students improve their academic performance and stay on track.
+Be specific, actionable, and supportive. Never be generic or vague.
+Always prioritize urgent concerns (failing grades, low attendance, imminent exams) first.
+You strictly only answer queries related to student's academic performance or any of their \
+enrolled course (Data Science / Full Stack Development).
+Any unrelated query must be rejected politely."""
 
-Your role is to help students improve their academic performance, navigate their learning journey, and stay on track toward their goals.
 
-You may be provided with:
-- Student academic data (attendance, scores, exams, progress, etc.)
-- Knowledge base context containing institution-specific documentation, portal features, workflows, policies, certifications, growth cycles, milestones, placements, and other student resources.
+# -----------------------------------------------------------------------------
+# MEMORY SECTION — appended to any prompt when memory is available
+# Edit this to change how the coach uses past memory.
+# -----------------------------------------------------------------------------
+def _build_memory_section(
+    memories: str | None,
+    recent_summaries: str | None,
+) -> str:
+    """
+    Builds the memory block appended to the bottom of any prompt.
+    Returns an empty string if no memory is available.
+    """
+    if not memories and not recent_summaries:
+        return ""
 
-Guidelines:
+    lines = ["\n=== STUDENT MEMORY ==="]
 
-- Be supportive, encouraging, and action-oriented.
-- Give specific and actionable recommendations whenever possible.
-- Prioritize urgent concerns first (failing grades, low attendance, upcoming exams, missed milestones, academic risks).
-- When student data is provided, use it to personalize your guidance.
-- When knowledge base context is provided, use it as the primary source of truth.
-- Do not invent platform-specific information that is not present in the provided knowledge base context.
-- If the required information is not available in the provided context, clearly state that you do not have that information.
-- Keep responses concise but helpful.
+    if memories:
+        lines.append("\nLong-term facts about this student:")
+        lines.append(memories)
 
-You should only answer questions related to:
-- Academic performance
-- Learning and study strategies
-- Student progress and success
-- Data Science coursework
-- Full Stack Development coursework
-- Institution-specific student processes
-- Learning portal access and navigation
-- Certifications, milestones, placements, exams
-- Platform features and workflows
+    if recent_summaries:
+        lines.append("\nRecent session summaries:")
+        lines.append(recent_summaries)
 
-Politely decline unrelated requests and explain that your role is limited to supporting students in their academic journey.
-"""
+    # --- MEMORY INSTRUCTIONS — edit to change how memory is used ---
+    lines.append("""
+=== MEMORY INSTRUCTIONS ===
+- Use the above memory to personalise your response when relevant.
+- Reference past patterns or commitments only when directly useful.
+- Do NOT mention memory unnecessarily or remind the student of old information repeatedly.
+- A student on their 5th session should feel meaningfully more understood than on their 1st.""")
+
+    return "\n".join(lines)
 
 
 # -----------------------------------------------------------------------------
@@ -50,7 +60,11 @@ Politely decline unrelated requests and explain that your role is limited to sup
 # Used when route = "general"
 # Edit the instructions block to change general conversation behaviour.
 # -----------------------------------------------------------------------------
-def build_general_prompt(student_name: str | None = None) -> str:
+def build_general_prompt(
+    student_name: str | None = None,
+    memories: str | None = None,
+    recent_summaries: str | None = None,
+) -> str:
     name_line = (
         f"You are currently speaking with {student_name}." if student_name else ""
     )
@@ -59,7 +73,9 @@ def build_general_prompt(student_name: str | None = None) -> str:
 If they ask about their grades, attendance, or exams, let them know you can look that up.
 If they ask about a course concept, let them know you can explain it in detail."""
 
-    return f"{COACH_PERSONA}\n{name_line}\n\n{instructions}"
+    memory_section = _build_memory_section(memories, recent_summaries)
+
+    return f"{COACH_PERSONA}\n{name_line}\n\n{instructions}{memory_section}"
 
 
 # -----------------------------------------------------------------------------
@@ -67,7 +83,11 @@ If they ask about a course concept, let them know you can explain it in detail."
 # Used when route = "student_data"
 # Edit the INSTRUCTIONS block to change how the coach uses academic data.
 # -----------------------------------------------------------------------------
-def build_data_prompt(student_context: dict) -> str:
+def build_data_prompt(
+    student_context: dict,
+    memories: str | None = None,
+    recent_summaries: str | None = None,
+) -> str:
     ctx = student_context
 
     # --- Format scores ---
@@ -110,6 +130,8 @@ def build_data_prompt(student_context: dict) -> str:
     else:
         exams_text = "  No upcoming exams scheduled."
 
+    memory_section = _build_memory_section(memories, recent_summaries)
+
     # --- INSTRUCTIONS — edit this block to change data-driven response style ---
     instructions = """- Use the data above to personalise your response.
 - Mention weak subjects (low scores) and what to do about them.
@@ -135,7 +157,7 @@ Upcoming Exams:
 {exams_text}
 
 === INSTRUCTIONS ===
-{instructions}"""
+{instructions}{memory_section}"""
 
 
 # -----------------------------------------------------------------------------
@@ -146,10 +168,14 @@ Upcoming Exams:
 def build_knowledge_prompt(
     knowledge_context: str,
     student_name: str | None = None,
+    memories: str | None = None,
+    recent_summaries: str | None = None,
 ) -> str:
     name_line = (
         f"You are currently speaking with {student_name}." if student_name else ""
     )
+
+    memory_section = _build_memory_section(memories, recent_summaries)
 
     # --- INSTRUCTIONS — edit this block to change RAG response style ---
     instructions = """- Answer using ONLY the retrieved content provided above.
@@ -164,7 +190,7 @@ def build_knowledge_prompt(
 {knowledge_context}
 
 === INSTRUCTIONS ===
-{instructions}"""
+{instructions}{memory_section}"""
 
 
 # -----------------------------------------------------------------------------
@@ -175,10 +201,12 @@ def build_knowledge_prompt(
 def build_combined_prompt(
     student_context: dict,
     knowledge_context: str,
+    memories: str | None = None,
+    recent_summaries: str | None = None,
 ) -> str:
     ctx = student_context
 
-    # --- Format scores (same as build_data_prompt) ---
+    # --- Format scores ---
     if ctx.get("recent_scores"):
         scores_text = "\n".join(
             f"  - {s['subject']}: {s['score']}/{s['max_score']} on {s['date']}"
@@ -218,6 +246,8 @@ def build_combined_prompt(
     else:
         exams_text = "  No upcoming exams scheduled."
 
+    memory_section = _build_memory_section(memories, recent_summaries)
+
     # --- INSTRUCTIONS — edit each block independently ---
     data_instructions = """- Reference the student's actual scores, attendance, and exam dates.
 - Flag any urgent areas (low scores, low attendance, imminent exams).
@@ -251,4 +281,4 @@ Using the student data:
 {data_instructions}
 
 Using the retrieved content:
-{knowledge_instructions}"""
+{knowledge_instructions}{memory_section}"""

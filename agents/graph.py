@@ -12,7 +12,7 @@ def _route_after_router(state: AgentState) -> str:
     Returns the next node name based on state['route'].
     """
     route = state.get("route", "general")
-
+    print(f"routing to {route}")
     if route == "student_data":
         return "fetch_student_data"
     elif route == "knowledge_base":
@@ -28,6 +28,7 @@ def _route_after_student_data(state: AgentState) -> str:
     Conditional edge after fetch_student_data.
     If route is 'both', continue to fetch_knowledge; otherwise go to generate.
     """
+    print("gettings student data and knowledge from vectordb")
     if state.get("route") == "both":
         return "fetch_knowledge"
     return "generate"

@@ -13,4 +13,5 @@ def fetch_student_data(state: AgentState) -> AgentState:
         return {**state, "student_context": None}
 
     context = build_student_context(student_id)
+    print("fetched student data")
     return {**state, "student_context": context}

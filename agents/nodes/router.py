@@ -67,6 +67,7 @@ def route_message(state: AgentState) -> AgentState:
     Node 1: Classify the student's message into one of four routes.
     Sets state['route'] to: general | student_data | knowledge_base | both
     """
+    print("inside router")
     llm = ChatOpenAI(
         model=st.secrets["app"]["OPENAI_MODEL"],
         temperature=0,
@@ -84,5 +85,5 @@ def route_message(state: AgentState) -> AgentState:
     # Fallback to "general" if the model returns something unexpected
     valid_routes = {"general", "student_data", "knowledge_base", "both"}
     route = raw if raw in valid_routes else "general"
-
+    print(f"routed to {state['route']}")
     return {**state, "route": route}

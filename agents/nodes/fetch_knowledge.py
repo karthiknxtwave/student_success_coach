@@ -10,4 +10,5 @@ def fetch_knowledge(state: AgentState) -> AgentState:
     """
     query = state.get("user_message", "")
     knowledge_context = retrieve(query)  # Returns str or None if collection empty
+    print("data retrieved from vectordb")
     return {**state, "knowledge_context": knowledge_context}
