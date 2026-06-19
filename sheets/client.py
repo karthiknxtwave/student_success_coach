@@ -14,8 +14,6 @@ SCOPES = [
 
 
 def _get_client() -> gspread.Client:
-    print("secrets keys:", st.secrets.keys())
-    print("gcp keys:", st.secrets["gcp_service_account"].keys())
     creds = Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]),  # ← add dict() wrapper
         scopes=SCOPES,
