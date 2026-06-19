@@ -22,7 +22,7 @@ def _get_client() -> gspread.Client:
 
 
 def _get_spreadsheet() -> gspread.Spreadsheet:
-    spreadsheet_id = os.getenv("SPREADSHEET_ID")
+    spreadsheet_id = st.secrets["app"]["SPREADSHEET_ID"]  # ← was os.getenv()
     client = _get_client()
     return client.open_by_key(spreadsheet_id)
 
