@@ -1,9 +1,13 @@
-import os
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from agents.state import AgentState
-from prompts.coach_prompt import build_general_prompt, build_data_prompt
+from prompts.coach_prompt import (
+    build_general_prompt,
+    build_data_prompt,
+    build_knowledge_prompt,
+    build_combined_prompt,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,8 +15,14 @@ load_dotenv()
 
 def generate_response(state: AgentState) -> AgentState:
     """
-    Node 3: Generate the final LLM response.
-    Uses enriched prompt if student_context is available, general prompt otherwise.
+    Final node: Generate the LLM response.
+
+    Prompt is selected based on whichever context is available:
+
+      student_context=None,  knowledge_context=None  → build_general_prompt
+      student_context={...}, knowledge_context=None  → build_data_prompt
+      student_context=None,  knowledge_context="..." → build_knowledge_prompt
+      student_context={...}, knowledge_context="..." → build_combined_prompt
     """
     llm = ChatOpenAI(
         model=st.secrets["app"]["OPENAI_MODEL"],
@@ -21,18 +31,24 @@ def generate_response(state: AgentState) -> AgentState:
     )
 
     student_context = state.get("student_context")
+    knowledge_context = state.get("knowledge_context")
 
-    # Pick the right system prompt
-    if student_context:
+    # --- Select the right prompt based on available context ---
+    if student_context and knowledge_context:
+        system_prompt = build_combined_prompt(student_context, knowledge_context)
+
+    elif student_context:
         system_prompt = build_data_prompt(student_context)
-    else:
-        # General query or no student selected
+
+    elif knowledge_context:
         student_name = None
-        if student_context:
-            student_name = student_context.get("name")
+        system_prompt = build_knowledge_prompt(knowledge_context, student_name)
+
+    else:
+        student_name = None
         system_prompt = build_general_prompt(student_name)
 
-    # Build message history for multi-turn context
+    # --- Build message history for multi-turn memory ---
     messages = [SystemMessage(content=system_prompt)]
 
     for turn in state.get("chat_history", []):
@@ -41,8 +57,7 @@ def generate_response(state: AgentState) -> AgentState:
         elif turn["role"] == "assistant":
             messages.append(AIMessage(content=turn["content"]))
 
-    # Add current message
     messages.append(HumanMessage(content=state["user_message"]))
-
+    # print(messages)
     result = llm.invoke(messages)
     return {**state, "response": result.content}
