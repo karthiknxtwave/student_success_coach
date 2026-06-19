@@ -2,6 +2,8 @@ import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from memory.mem0_client import add_memory, get_facts, get_summaries
+from signals.signal_detector import detect_signals
+from sheets.client import build_student_context, append_signals
 
 # ---------------------------------------------------------------------------
 # SUMMARY PROMPT — edit to change what gets captured in session summaries
@@ -73,12 +75,6 @@ def load_memories(student_id: str) -> dict:
     """
     Called at session start when a student is selected.
     Retrieves long-term facts and recent session summaries from Mem0.
-
-    Returns:
-        {
-            "memories": "formatted string of facts" or None,
-            "recent_summaries": "formatted string of summaries" or None,
-        }
     """
     facts = get_facts(student_id)
     summaries = get_summaries(student_id)
@@ -97,10 +93,7 @@ def save_session(student_id: str, chat_history: list[dict]) -> None:
     Called at session end when the student clicks End Session.
     1. Generates a session summary and stores it in Mem0.
     2. Extracts long-term facts and stores each one in Mem0.
-
-    Args:
-        student_id:   Used as the Mem0 user identifier.
-        chat_history: Full conversation from st.session_state.messages.
+    3. Detects signals and stores them in Google Sheets.
     """
     llm = _get_llm()
     conversation_text = _format_chat_for_llm(chat_history)
@@ -128,10 +121,8 @@ def save_session(student_id: str, chat_history: list[dict]) -> None:
     fact_result = llm.invoke(fact_messages)
     raw = fact_result.content.strip()
 
-    # Safely parse the JSON array
     try:
         import json
-        # Strip markdown fences if model wraps in ```json
         clean = raw.replace("```json", "").replace("```", "").strip()
         facts = json.loads(clean)
         if isinstance(facts, list):
@@ -144,6 +135,14 @@ def save_session(student_id: str, chat_history: list[dict]) -> None:
                     )
         print("session saved")
     except (json.JSONDecodeError, ValueError):
-        # If parsing fails, skip fact storage silently
         print("failed to save session")
         pass
+
+    # --- Step 3: Detect and store signals ---
+    try:
+        student_context = build_student_context(student_id)
+        signals = detect_signals(conversation_text, student_context)
+        append_signals(signals, student_id)
+        print(f"[signals] Detection complete. {len(signals)} signal(s) found.")
+    except Exception as e:
+        print(f"[signals] Detection failed: {e}")
