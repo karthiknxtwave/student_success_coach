@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+
 import streamlit as st
 from agents.conversation_agent import ConversationAgent
 from sheets.client import fetch_all_students
