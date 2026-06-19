@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from agents.state import AgentState
@@ -35,9 +36,9 @@ def route_message(state: AgentState) -> AgentState:
     Sets state['needs_data'] to True or False.
     """
     llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL"),
+        model=st.secrets["app"]["OPENAI_MODEL"],
         temperature=0,
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=st.secrets["app"]["OPENAI_API_KEY"],
     )
 
     messages = [

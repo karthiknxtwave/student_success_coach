@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from agents.state import AgentState
@@ -14,9 +15,9 @@ def generate_response(state: AgentState) -> AgentState:
     Uses enriched prompt if student_context is available, general prompt otherwise.
     """
     llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL"),
+        model=st.secrets["app"]["OPENAI_MODEL"],
         temperature=0.5,
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=st.secrets["app"]["OPENAI_API_KEY"],
     )
 
     student_context = state.get("student_context")
