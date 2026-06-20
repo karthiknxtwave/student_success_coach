@@ -144,7 +144,7 @@ def build_student_context(student_id: str) -> dict | None:
 
 
 # --------------------------------------------------------------------------- #
-#  Signals sheet functions (new)
+#  Signals sheet functions (unchanged)
 # --------------------------------------------------------------------------- #
 
 SIGNALS_SHEET = "signals"
@@ -176,6 +176,14 @@ def fetch_signals() -> list[dict]:
     return [
         {**record, "row_index": idx + 2}
         for idx, record in enumerate(records)
+    ]
+
+
+def fetch_open_signals() -> list[dict]:
+    """Return only unactioned signals (actioned == false). Used for plan generation."""
+    return [
+        s for s in fetch_signals()
+        if str(s.get("actioned", "false")).lower() == "false"
     ]
 
 
@@ -235,3 +243,89 @@ def update_signal_actioned(row_index: int) -> None:
     actioned_col = SIGNALS_HEADERS.index("actioned") + 1  # 1-based column index
     sheet.update_cell(row_index, actioned_col, "true")
     print(f"[signals] Row {row_index} marked as actioned.")
+
+
+# --------------------------------------------------------------------------- #
+#  Daily plans sheet functions (new — M7)
+# --------------------------------------------------------------------------- #
+
+DAILY_PLANS_SHEET = "daily_plans"
+DAILY_PLANS_HEADERS = [
+    "plan_date", "student_id", "student_name", "priority_score",
+    "session_type", "duration_minutes", "reason", "status", "coach_id",
+]
+# status values: planned | approved | completed | deferred
+
+
+def _get_daily_plans_sheet() -> gspread.Worksheet:
+    """Return the daily_plans worksheet, creating it with headers if it doesn't exist."""
+    spreadsheet = _get_spreadsheet()
+    try:
+        return spreadsheet.worksheet(DAILY_PLANS_SHEET)
+    except gspread.WorksheetNotFound:
+        sheet = spreadsheet.add_worksheet(title=DAILY_PLANS_SHEET, rows=1000, cols=10)
+        sheet.append_row(DAILY_PLANS_HEADERS)
+        return sheet
+
+
+def fetch_daily_plans(plan_date: str | None = None) -> list[dict]:
+    """
+    Return daily plan rows, optionally filtered to one plan_date (YYYY-MM-DD).
+    Each dict includes a 'row_index' key for status updates.
+    """
+    sheet = _get_daily_plans_sheet()
+    records = sheet.get_all_records()
+    rows = [
+        {**record, "row_index": idx + 2}
+        for idx, record in enumerate(records)
+    ]
+    if plan_date:
+        rows = [r for r in rows if str(r.get("plan_date")) == plan_date]
+    return rows
+
+
+def append_daily_plans(plan_rows: list[dict], plan_date: str, coach_id: str) -> None:
+    """
+    Append approved plan rows to the daily_plans sheet.
+
+    Args:
+        plan_rows: List of dicts with keys: student_id, student_name,
+                   priority_score, session_type, duration_minutes, reason, status
+        plan_date: ISO date string, e.g. "2026-06-21"
+        coach_id:  Coach identifier (single-coach placeholder for now)
+    """
+    if not plan_rows:
+        return
+
+    sheet = _get_daily_plans_sheet()
+    rows_to_append = []
+
+    for plan in plan_rows:
+        rows_to_append.append([
+            plan_date,
+            plan["student_id"],
+            plan["student_name"],
+            plan["priority_score"],
+            plan["session_type"],
+            plan["duration_minutes"],
+            plan["reason"],
+            plan.get("status", "planned"),
+            coach_id,
+        ])
+
+    sheet.append_rows(rows_to_append)
+    print(f"[daily_plans] Stored {len(rows_to_append)} plan row(s) for {plan_date}.")
+
+
+def update_plan_status(row_index: int, status: str) -> None:
+    """
+    Update the status of a single daily plan row.
+
+    Args:
+        row_index: The 1-based sheet row index (included in fetch_daily_plans results).
+        status:    One of planned | approved | completed | deferred
+    """
+    sheet = _get_daily_plans_sheet()
+    status_col = DAILY_PLANS_HEADERS.index("status") + 1  # 1-based column index
+    sheet.update_cell(row_index, status_col, status)
+    print(f"[daily_plans] Row {row_index} status set to '{status}'.")

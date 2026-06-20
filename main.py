@@ -2,10 +2,20 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
+from datetime import date, datetime
+
 import streamlit as st
 from agents.conversation_agent import ConversationAgent
-from sheets.client import fetch_all_students, fetch_signals, update_signal_actioned
+from sheets.client import (
+    fetch_all_students,
+    fetch_open_signals,
+    fetch_daily_plans,
+    append_daily_plans,
+    update_plan_status,
+)
 from memory.memory_manager import load_memories, save_session
+from coaching_plan.plan_generator import build_daily_plan
+from coaching_plan.calendar_client import create_coaching_event, DEFAULT_COACH_ID
 
 st.set_page_config(
     page_title="Success Coach AI",
@@ -103,23 +113,6 @@ with st.sidebar:
         if st.session_state.get("selected_student_name"):
             st.success(f"Logged in as: **{st.session_state.selected_student_name}**")
 
-    else:
-        st.header("🔔 Coach Filters")
-
-        severity_filter = st.selectbox(
-            "Severity", ["all", "high", "medium", "low"]
-        )
-        urgency_filter = st.selectbox(
-            "Urgency", ["all", "today", "tomorrow", "this_week"]
-        )
-        actioned_filter = st.selectbox(
-            "Status", ["open only", "all"]
-        )
-
-        if st.button("🔄 Refresh Signals"):
-            st.session_state.pop("signals_cache", None)
-            st.rerun()
-
 
 # --------------------------------------------------------------------------- #
 #  Student View
@@ -170,68 +163,156 @@ if view == "Student":
 
 
 # --------------------------------------------------------------------------- #
-#  Coach View
+#  Coach View — Daily Coaching Plan (signals shown inline per student)
 # --------------------------------------------------------------------------- #
 else:
-    st.subheader("🔔 Open Signals")
+    st.subheader("🗓️ Daily Coaching Plan")
 
-    # Load and cache signals until refresh is clicked
-    if "signals_cache" not in st.session_state:
-        with st.spinner("Loading signals..."):
-            try:
-                st.session_state.signals_cache = fetch_signals()
-            except Exception as e:
-                st.error(f"Could not load signals: {e}")
-                st.session_state.signals_cache = []
+    today_str = date.today().isoformat()
 
-    signals = st.session_state.signals_cache
+    col_gen, col_status = st.columns([1, 3])
+    with col_gen:
+        if st.button("✨ Generate Daily Plan"):
+            with st.spinner("Building today's plan from open signals..."):
+                try:
+                    open_signals = fetch_open_signals()
+                    student_lookup = {
+                        s["student_id"]: s["name"]
+                        for s in fetch_all_students()
+                    }
+                    st.session_state.draft_plan = build_daily_plan(
+                        open_signals, student_lookup
+                    )
+                    st.session_state.draft_plan_date = today_str
+                except Exception as e:
+                    st.error(f"Could not generate plan: {e}")
 
-    # --- Apply filters ---
-    filtered = signals
+    draft = st.session_state.get("draft_plan")
 
-    if severity_filter != "all":
-        filtered = [s for s in filtered if s.get("severity") == severity_filter]
-
-    if urgency_filter != "all":
-        filtered = [s for s in filtered if s.get("urgency") == urgency_filter]
-
-    if actioned_filter == "open only":
-        filtered = [
-            s for s in filtered
-            if str(s.get("actioned", "false")).lower() == "false"
-        ]
-
-    if not filtered:
-        st.info("No signals match the current filters.")
+    if not draft:
+        st.info("Click **Generate Daily Plan** to build today's draft from open signals.")
     else:
-        # Severity badge colours
-        severity_color = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+        scheduled = draft["scheduled"]
+        deferred = draft["deferred"]
 
-        for signal in filtered:
-            icon = severity_color.get(signal.get("severity", "low"), "⚪")
-            actioned = str(signal.get("actioned", "false")).lower() == "true"
+        st.markdown(f"### Today's Sessions ({len(scheduled)} scheduled)")
 
-            with st.expander(
-                f"{icon} {signal.get('signal_type', '').replace('_', ' ').title()} "
-                f"— {signal.get('student_id')} "
-                f"{'✅ Actioned' if actioned else ''}",
-                expanded=not actioned,
-            ):
-                col1, col2 = st.columns(2)
+        if not scheduled:
+            st.info("No open signals — nothing to schedule today.")
+
+        # Editable draft — coach can remove sessions and adjust start time
+        removed_indices = set()
+        start_times = {}
+
+        for i, plan in enumerate(scheduled):
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([3, 2, 1])
                 with col1:
-                    st.markdown(f"**Severity:** {signal.get('severity', '—')}")
-                    st.markdown(f"**Urgency:** {signal.get('urgency', '—')}")
+                    st.markdown(f"**{plan['student_name']}** ({plan['student_id']})")
+                    st.markdown(f"Session Type: **{plan['session_type']}**")
+                    st.markdown(f"Signals: {', '.join(plan['signals'])}")
+                    st.caption(plan["reason"])
                 with col2:
-                    st.markdown(f"**Student ID:** {signal.get('student_id', '—')}")
-                    st.markdown(f"**Timestamp:** {signal.get('timestamp', '—')}")
+                    st.markdown(f"Priority Score: **{plan['priority_score']}**")
+                    st.markdown(f"Duration: **{plan['duration_minutes']} min**")
+                    start_times[i] = st.time_input(
+                        "Start time", key=f"start_{i}", label_visibility="collapsed"
+                    )
+                with col3:
+                    if st.checkbox("Remove", key=f"remove_{i}"):
+                        removed_indices.add(i)
 
-                st.markdown(f"**Reason:** {signal.get('reason', '—')}")
+        if deferred:
+            st.markdown(f"### Deferred to Tomorrow ({len(deferred)})")
+            for plan in deferred:
+                with st.container(border=True):
+                    st.markdown(f"**{plan['student_name']}** ({plan['student_id']})")
+                    st.markdown(f"Signals: {', '.join(plan['signals'])}")
+                    st.markdown(f"Priority Score: {plan['priority_score']}")
+                    st.caption(plan["defer_reason"])
 
-                if not actioned:
-                    if st.button("✅ Mark as Actioned", key=f"action_{signal['row_index']}"):
+        st.divider()
+
+        # Approve — writes to sheet + creates calendar events for kept sessions
+        if scheduled and st.button("✅ Approve Plan & Create Calendar Events"):
+            with st.spinner("Saving plan and creating calendar events..."):
+                try:
+                    approved = [
+                        p for i, p in enumerate(scheduled)
+                        if i not in removed_indices
+                    ]
+
+                    plan_rows = [
+                        {**p, "status": "approved"} for p in approved
+                    ] + [
+                        {**p, "priority_score": p["priority_score"],
+                         "session_type": "", "duration_minutes": 0,
+                         "reason": p["defer_reason"], "status": "deferred"}
+                        for p in deferred
+                    ]
+
+                    append_daily_plans(
+                        plan_rows,
+                        plan_date=st.session_state.draft_plan_date,
+                        coach_id=DEFAULT_COACH_ID,
+                    )
+
+                    event_links = []
+                    for i, plan in enumerate(approved):
+                        start_dt = datetime.combine(
+                            date.today(), start_times[scheduled.index(plan)]
+                        ).isoformat()
+                        link = create_coaching_event(
+                            student_name=plan["student_name"],
+                            student_id=plan["student_id"],
+                            session_type=plan["session_type"],
+                            signals=plan["signals"],
+                            reason=plan["reason"],
+                            start_time=start_dt,
+                            duration_minutes=plan["duration_minutes"],
+                            coach_id=DEFAULT_COACH_ID,
+                        )
+                        event_links.append(link)
+
+                    st.session_state.draft_plan = None
+                    st.success(
+                        f"Plan approved! {len(approved)} calendar event(s) created."
+                    )
+                    for link in event_links:
+                        st.markdown(f"- [View event]({link})")
+
+                except Exception as e:
+                    st.error(f"Could not approve plan: {e}")
+
+    st.divider()
+
+    # --- Today's approved sessions with Mark Done ---
+    st.markdown("### Today's Approved Sessions")
+    try:
+        todays_plans = [
+            p for p in fetch_daily_plans(plan_date=today_str)
+            if p.get("status") in ("approved", "planned")
+        ]
+    except Exception as e:
+        st.error(f"Could not load today's plans: {e}")
+        todays_plans = []
+
+    if not todays_plans:
+        st.caption("No approved sessions yet today.")
+    else:
+        for plan in todays_plans:
+            with st.container(border=True):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(
+                        f"**{plan['student_name']}** ({plan['student_id']}) "
+                        f"— {plan['session_type']} ({plan['duration_minutes']} min)"
+                    )
+                    st.caption(plan["reason"])
+                with col2:
+                    if st.button("✔️ Mark Done", key=f"done_{plan['row_index']}"):
                         try:
-                            update_signal_actioned(signal["row_index"])
-                            st.session_state.pop("signals_cache", None)
+                            update_plan_status(plan["row_index"], "completed")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Could not update signal: {e}")
+                            st.error(f"Could not update status: {e}")
