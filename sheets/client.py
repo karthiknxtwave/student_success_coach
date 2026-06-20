@@ -179,12 +179,15 @@ def fetch_signals() -> list[dict]:
     ]
 
 
-def fetch_open_signals() -> list[dict]:
-    """Return only unactioned signals (actioned == false). Used for plan generation."""
-    return [
+def fetch_open_signals(student_id: str | None = None) -> list[dict]:
+    """Return only unactioned signals. Optionally filter to one student."""
+    signals = [
         s for s in fetch_signals()
         if str(s.get("actioned", "false")).lower() == "false"
     ]
+    if student_id is not None:
+        signals = [s for s in signals if str(s.get("student_id")) == str(student_id)]
+    return signals
 
 
 def append_signals(signals: list[dict], student_id: str) -> None:

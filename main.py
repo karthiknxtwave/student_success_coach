@@ -16,6 +16,9 @@ from sheets.client import (
 from memory.memory_manager import load_memories, save_session
 from coaching_plan.plan_generator import build_daily_plan
 from coaching_plan.calendar_client import create_coaching_event, DEFAULT_COACH_ID
+from signals.brief_generator import generate_brief
+from memory.mem0_client import get_facts, get_summaries
+from sheets.client import build_student_context
 
 st.set_page_config(
     page_title="Success Coach AI",
@@ -285,6 +288,48 @@ else:
                     st.error(f"Could not approve plan: {e}")
 
     st.divider()
+
+    st.divider()
+
+    # --- Pre-Meeting Student Brief ---
+    st.markdown("### 📋 Pre-Meeting Student Brief")
+
+    # Student selector (independent of Daily Plan flow)
+    brief_students = st.session_state.get("student_list") or fetch_all_students()
+    brief_options = {f"{s['name']} ({s['student_id']})": s["student_id"] for s in brief_students}
+    brief_display_names = ["— Select student —"] + list(brief_options.keys())
+    brief_selected = st.selectbox("Select student for brief", brief_display_names, key="brief_student_select")
+
+    if brief_selected != "— Select student —":
+        brief_student_id = brief_options[brief_selected]
+
+        if st.button("📋 Generate Brief", key="generate_brief_btn"):
+            with st.spinner("Generating pre-meeting brief..."):
+                try:
+                    ctx       = build_student_context(brief_student_id)
+                    signals   = fetch_open_signals(brief_student_id)
+                    facts     = get_facts(brief_student_id)
+                    summaries = get_summaries(brief_student_id)
+
+                    result = generate_brief(
+                        student_id=brief_student_id,
+                        student_context=ctx,
+                        open_signals=signals,
+                        facts=facts,
+                        summaries=summaries,
+                    )
+                    st.session_state.brief_result = result
+                except Exception as e:
+                    st.error(f"Could not generate brief: {e}")
+
+    if st.session_state.get("brief_result"):
+        result = st.session_state.brief_result
+        with st.container(border=True):
+            st.markdown(result["brief"])
+            if result.get("questions"):
+                st.markdown("**Conversation starters:**")
+                for q in result["questions"]:
+                    st.markdown(f"- {q}")
 
     # --- Today's approved sessions with Mark Done ---
     st.markdown("### Today's Approved Sessions")
