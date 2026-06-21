@@ -1,34 +1,7 @@
-"""
-Google Calendar integration via OAuth2 (personal Gmail account).
-
-CURRENT STATE (single coach):
-  Refresh token lives in st.secrets under [google_calendar]. All events are
-  created on that one account's calendar.
-
-FUTURE STATE (multi-coach):
-  Replace _get_credentials() to look up the refresh token by coach_id from a
-  coach_tokens sheet/table instead of st.secrets. Every function below already
-  accepts coach_id, so no caller-side changes will be needed when that swap
-  happens — only this file changes.
-
-One-time setup required before this works:
-1. Run generate_calendar_token.py locally (browser consent) to obtain a
-   refresh token.
-2. Paste the resulting refresh token into st.secrets under [google_calendar].
-
-Required secrets.toml block:
-
-[google_calendar]
-CLIENT_ID = "..."
-CLIENT_SECRET = "..."
-REFRESH_TOKEN = "..."
-CALENDAR_ID = "primary"   # or a specific calendar id
-COACH_EMAIL = "coach@example.com"
-"""
-
 import streamlit as st
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
@@ -69,7 +42,7 @@ def create_coaching_event(
     start_time: str,
     duration_minutes: int,
     coach_id: str = DEFAULT_COACH_ID,
-) -> str:
+) -> dict:
     """
     Create a Calendar event for an approved coaching session.
     Only the coach is invited — students are never added.
@@ -81,7 +54,9 @@ def create_coaching_event(
                     later requires no caller-side changes.
 
     Returns:
-        The created event's HTML link (for confirmation/display).
+        {"event_id": str, "link": str}
+        event_id must be persisted (e.g. in daily_plans) to allow cancellation
+        later via cancel_coaching_event().
     """
     cfg = st.secrets["google_calendar"]
     service = _get_service(coach_id)
@@ -109,7 +84,41 @@ def create_coaching_event(
         body=event,
     ).execute()
 
-    return created.get("htmlLink", "")
+    return {
+        "event_id": created.get("id", ""),
+        "link": created.get("htmlLink", ""),
+    }
+
+
+def cancel_coaching_event(event_id: str, coach_id: str = DEFAULT_COACH_ID) -> bool:
+    """
+    Cancel (delete) a previously created coaching event.
+
+    Args:
+        event_id: The Calendar event ID returned by create_coaching_event().
+        coach_id: Which coach's calendar to use.
+
+    Returns:
+        True if the event was deleted or was already gone, False on a real error.
+    """
+    if not event_id:
+        return True  # nothing to cancel
+
+    cfg = st.secrets["google_calendar"]
+    service = _get_service(coach_id)
+
+    try:
+        service.events().delete(
+            calendarId=cfg.get("CALENDAR_ID", "primary"),
+            eventId=event_id,
+        ).execute()
+        return True
+    except HttpError as e:
+        if e.resp.status in (404, 410):
+            # Already deleted/gone — treat as success
+            return True
+        print(f"[calendar] Failed to cancel event {event_id}: {e}")
+        return False
 
 
 def _add_minutes(iso_datetime: str, minutes: int) -> str:

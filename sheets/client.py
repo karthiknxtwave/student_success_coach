@@ -249,15 +249,17 @@ def update_signal_actioned(row_index: int) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  Daily plans sheet functions (new — M7)
+#  Daily plans sheet functions (M7, extended in M9 with event_id)
 # --------------------------------------------------------------------------- #
 
 DAILY_PLANS_SHEET = "daily_plans"
 DAILY_PLANS_HEADERS = [
     "plan_date", "student_id", "student_name", "priority_score",
     "session_type", "duration_minutes", "reason", "status", "coach_id",
+    "event_id",
 ]
 # status values: planned | approved | completed | deferred
+# event_id: Google Calendar event ID for this session, "" if none / cancelled
 
 
 def _get_daily_plans_sheet() -> gspread.Worksheet:
@@ -274,7 +276,7 @@ def _get_daily_plans_sheet() -> gspread.Worksheet:
 def fetch_daily_plans(plan_date: str | None = None) -> list[dict]:
     """
     Return daily plan rows, optionally filtered to one plan_date (YYYY-MM-DD).
-    Each dict includes a 'row_index' key for status updates.
+    Each dict includes a 'row_index' key for status/event_id updates.
     """
     sheet = _get_daily_plans_sheet()
     records = sheet.get_all_records()
@@ -289,11 +291,12 @@ def fetch_daily_plans(plan_date: str | None = None) -> list[dict]:
 
 def append_daily_plans(plan_rows: list[dict], plan_date: str, coach_id: str) -> None:
     """
-    Append approved plan rows to the daily_plans sheet.
+    Append plan rows to the daily_plans sheet.
 
     Args:
         plan_rows: List of dicts with keys: student_id, student_name,
-                   priority_score, session_type, duration_minutes, reason, status
+                   priority_score, session_type, duration_minutes, reason,
+                   status, event_id (optional, defaults to "")
         plan_date: ISO date string, e.g. "2026-06-21"
         coach_id:  Coach identifier (single-coach placeholder for now)
     """
@@ -314,6 +317,7 @@ def append_daily_plans(plan_rows: list[dict], plan_date: str, coach_id: str) -> 
             plan["reason"],
             plan.get("status", "planned"),
             coach_id,
+            plan.get("event_id", ""),
         ])
 
     sheet.append_rows(rows_to_append)
@@ -332,3 +336,18 @@ def update_plan_status(row_index: int, status: str) -> None:
     status_col = DAILY_PLANS_HEADERS.index("status") + 1  # 1-based column index
     sheet.update_cell(row_index, status_col, status)
     print(f"[daily_plans] Row {row_index} status set to '{status}'.")
+
+
+def update_plan_event_id(row_index: int, event_id: str) -> None:
+    """
+    Update the Calendar event_id for a single daily plan row.
+    Pass an empty string to clear it (e.g. after cancellation).
+
+    Args:
+        row_index: The 1-based sheet row index (included in fetch_daily_plans results).
+        event_id:  Google Calendar event ID, or "" to clear.
+    """
+    sheet = _get_daily_plans_sheet()
+    event_id_col = DAILY_PLANS_HEADERS.index("event_id") + 1  # 1-based column index
+    sheet.update_cell(row_index, event_id_col, event_id)
+    print(f"[daily_plans] Row {row_index} event_id set to '{event_id}'.")

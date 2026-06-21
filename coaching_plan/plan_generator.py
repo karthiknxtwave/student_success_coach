@@ -6,7 +6,7 @@ No LLM involved — all scoring, session typing, and capacity-fitting is rule-ba
 # ---------------------------------------------------------------------------
 # CONFIG — edit these to tune planning behaviour
 # ---------------------------------------------------------------------------
-COACH_DAILY_CAPACITY = 3   # Max coaching sessions per day. Raise this as coaches scale.
+COACH_DAILY_CAPACITY = 2   # Max coaching sessions per day. Raise this as coaches scale.
 
 SEVERITY_SCORES = {"high": 3, "medium": 2, "low": 1}
 URGENCY_SCORES = {"today": 3, "tomorrow": 2, "this_week": 1}

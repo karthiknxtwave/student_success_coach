@@ -12,10 +12,15 @@ from sheets.client import (
     fetch_daily_plans,
     append_daily_plans,
     update_plan_status,
+    update_plan_event_id,
 )
 from memory.memory_manager import load_memories, save_session
 from coaching_plan.plan_generator import build_daily_plan
-from coaching_plan.calendar_client import create_coaching_event, DEFAULT_COACH_ID
+from coaching_plan.calendar_client import (
+    create_coaching_event,
+    cancel_coaching_event,
+    DEFAULT_COACH_ID,
+)
 from signals.brief_generator import generate_brief
 from memory.mem0_client import get_facts, get_summaries
 from sheets.client import build_student_context
@@ -94,27 +99,14 @@ with st.sidebar:
             st.session_state.messages = []
             st.rerun()
 
-        # End Session
-        if (
-            st.session_state.get("selected_student_id")
-            and st.session_state.get("messages")
-        ):
-            if st.button("🔚 End Session"):
-                with st.spinner("Saving session and detecting signals..."):
-                    try:
-                        save_session(
-                            student_id=st.session_state.selected_student_id,
-                            chat_history=st.session_state.messages,
-                        )
-                        st.session_state.messages = []
-                        st.session_state.memories = None
-                        st.session_state.recent_summaries = None
-                        st.success("Session saved! See you next time. 👋")
-                    except Exception as e:
-                        st.error(f"Could not save session: {e}")
-
         if st.session_state.get("selected_student_name"):
             st.success(f"Logged in as: **{st.session_state.selected_student_name}**")
+
+        # End Session button is rendered AFTER chat handling further down in
+        # this script (see bottom of Student View block) — NOT here. Streamlit
+        # runs top-to-bottom in a single pass, so if it were rendered here it
+        # would always reflect messages from BEFORE the current message was
+        # sent, making the button appear to "lag" by one interaction.
 
 
 # --------------------------------------------------------------------------- #
@@ -164,46 +156,126 @@ if view == "Student":
 
         st.session_state.messages.append({"role": "assistant", "content": response})
 
+    # --- End Session (rendered after chat handling so it reflects the
+    #     up-to-date message count from THIS run, not the previous one) ---
+    with st.sidebar:
+        if (
+            st.session_state.get("selected_student_id")
+            and st.session_state.get("messages")
+        ):
+            st.divider()
+            if st.button("🔚 End Session"):
+                with st.spinner("Saving session and detecting signals..."):
+                    try:
+                        save_session(
+                            student_id=st.session_state.selected_student_id,
+                            chat_history=st.session_state.messages,
+                        )
+                        st.session_state.messages = []
+                        st.session_state.memories = None
+                        st.session_state.recent_summaries = None
+                        st.success("Session saved! See you next time. 👋")
+                    except Exception as e:
+                        st.error(f"Could not save session: {e}")
+
 
 # --------------------------------------------------------------------------- #
-#  Coach View — Daily Coaching Plan (signals shown inline per student)
+#  Coach View
 # --------------------------------------------------------------------------- #
 else:
     st.subheader("🗓️ Daily Coaching Plan")
 
     today_str = date.today().isoformat()
 
-    col_gen, col_status = st.columns([1, 3])
+    def _todays_approved_rows() -> list[dict]:
+        """Rows already locked in for today (status approved or completed)."""
+        return [
+            p for p in fetch_daily_plans(plan_date=today_str)
+            if p.get("status") in ("approved", "completed")
+        ]
+
+    def _build_fresh_draft() -> dict:
+        """Run the deterministic planner on the current open-signal pool."""
+        open_signals = fetch_open_signals()
+        student_lookup = {
+            s["student_id"]: s["name"] for s in fetch_all_students()
+        }
+        return build_daily_plan(open_signals, student_lookup)
+
+    approved_today = _todays_approved_rows()
+    plan_exists_today = len(approved_today) > 0
+
+    col_gen, col_refresh, col_status = st.columns([1, 1, 2])
+
+    # --- First-time generation (no approved plan exists yet today) ---
     with col_gen:
-        if st.button("✨ Generate Daily Plan"):
-            with st.spinner("Building today's plan from open signals..."):
-                try:
-                    open_signals = fetch_open_signals()
-                    student_lookup = {
-                        s["student_id"]: s["name"]
-                        for s in fetch_all_students()
-                    }
-                    st.session_state.draft_plan = build_daily_plan(
-                        open_signals, student_lookup
-                    )
-                    st.session_state.draft_plan_date = today_str
-                except Exception as e:
-                    st.error(f"Could not generate plan: {e}")
+        if not plan_exists_today:
+            if st.button("✨ Generate Daily Plan"):
+                with st.spinner("Building today's plan from open signals..."):
+                    try:
+                        st.session_state.draft_plan = _build_fresh_draft()
+                        st.session_state.draft_plan_date = today_str
+                        st.session_state.is_refresh = False
+                    except Exception as e:
+                        st.error(f"Could not generate plan: {e}")
+        else:
+            st.caption("✅ Plan generated for today")
+
+    # --- Refresh: only meaningful once a plan has been approved today ---
+    with col_refresh:
+        if plan_exists_today:
+            if st.button("🔄 Refresh Plan"):
+                with st.spinner("Checking for urgent changes..."):
+                    try:
+                        new_draft = _build_fresh_draft()
+                        new_ids = {p["student_id"] for p in new_draft["scheduled"]}
+                        current_ids = {p["student_id"] for p in approved_today}
+
+                        if new_ids == current_ids:
+                            st.session_state.draft_plan = None
+                            st.session_state.refresh_message = "Plan updated. No changes — today's schedule stays the same."
+                        else:
+                            st.session_state.draft_plan = new_draft
+                            st.session_state.draft_plan_date = today_str
+                            st.session_state.is_refresh = True
+                            st.session_state.refresh_message = None
+                    except Exception as e:
+                        st.error(f"Could not refresh plan: {e}")
+
+    if st.session_state.get("refresh_message"):
+        st.success(st.session_state.refresh_message)
+        st.session_state.refresh_message = None
 
     draft = st.session_state.get("draft_plan")
 
-    if not draft:
+    # --- Show today's locked-in schedule when there's no pending draft ---
+    if not draft and plan_exists_today:
+        st.markdown("### Today's Scheduled Sessions")
+        for plan in approved_today:
+            with st.container(border=True):
+                st.markdown(
+                    f"**{plan['student_name']}** ({plan['student_id']}) "
+                    f"— {plan['session_type']} ({plan['duration_minutes']} min) "
+                    f"— *{plan['status']}*"
+                )
+                st.caption(plan["reason"])
+
+    if not draft and not plan_exists_today:
         st.info("Click **Generate Daily Plan** to build today's draft from open signals.")
-    else:
+
+    # --- Draft review (first-time generation OR a refresh found changes) ---
+    if draft:
         scheduled = draft["scheduled"]
         deferred = draft["deferred"]
+
+        if st.session_state.get("is_refresh"):
+            st.warning("⚠️ Urgent signals changed today's priorities. Review the updated plan below.")
 
         st.markdown(f"### Today's Sessions ({len(scheduled)} scheduled)")
 
         if not scheduled:
             st.info("No open signals — nothing to schedule today.")
 
-        # Editable draft — coach can remove sessions and adjust start time
         removed_indices = set()
         start_times = {}
 
@@ -226,7 +298,8 @@ else:
                         removed_indices.add(i)
 
         if deferred:
-            st.markdown(f"### Deferred to Tomorrow ({len(deferred)})")
+            st.markdown(f"### Deferred ({len(deferred)})")
+            st.caption("Their signals remain open and will be reconsidered next time a plan is generated or refreshed.")
             for plan in deferred:
                 with st.container(border=True):
                     st.markdown(f"**{plan['student_name']}** ({plan['student_id']})")
@@ -236,36 +309,47 @@ else:
 
         st.divider()
 
-        # Approve — writes to sheet + creates calendar events for kept sessions
-        if scheduled and st.button("✅ Approve Plan & Create Calendar Events"):
-            with st.spinner("Saving plan and creating calendar events..."):
+        approve_label = (
+            "✅ Approve Updated Plan" if st.session_state.get("is_refresh")
+            else "✅ Approve Plan & Create Calendar Events"
+        )
+
+        if scheduled and st.button(approve_label):
+            with st.spinner("Saving plan and syncing calendar..."):
                 try:
                     approved = [
                         p for i, p in enumerate(scheduled)
                         if i not in removed_indices
                     ]
+                    approved_student_ids = {p["student_id"] for p in approved}
 
-                    plan_rows = [
-                        {**p, "status": "approved"} for p in approved
-                    ] + [
-                        {**p, "priority_score": p["priority_score"],
-                         "session_type": "", "duration_minutes": 0,
-                         "reason": p["defer_reason"], "status": "deferred"}
-                        for p in deferred
-                    ]
+                    # --- Cancel events for students who were approved before
+                    #     but are no longer in the new approved set ---
+                    if st.session_state.get("is_refresh"):
+                        for old_row in approved_today:
+                            if old_row["student_id"] not in approved_student_ids:
+                                event_id = old_row.get("event_id", "")
+                                if event_id:
+                                    cancel_coaching_event(event_id, coach_id=DEFAULT_COACH_ID)
+                                update_plan_status(old_row["row_index"], "deferred")
+                                update_plan_event_id(old_row["row_index"], "")
 
-                    append_daily_plans(
-                        plan_rows,
-                        plan_date=st.session_state.draft_plan_date,
-                        coach_id=DEFAULT_COACH_ID,
-                    )
-
+                    # --- Determine which approved students are genuinely new
+                    #     (need a fresh calendar event) vs already-approved
+                    #     today (keep their existing event, skip creation) ---
+                    already_approved_ids = {r["student_id"] for r in approved_today}
+                    new_plan_rows = []
                     event_links = []
+
                     for i, plan in enumerate(approved):
+                        if plan["student_id"] in already_approved_ids:
+                            # Already scheduled today — leave their row/event alone
+                            continue
+
                         start_dt = datetime.combine(
                             date.today(), start_times[scheduled.index(plan)]
                         ).isoformat()
-                        link = create_coaching_event(
+                        result = create_coaching_event(
                             student_name=plan["student_name"],
                             student_id=plan["student_id"],
                             session_type=plan["session_type"],
@@ -275,19 +359,30 @@ else:
                             duration_minutes=plan["duration_minutes"],
                             coach_id=DEFAULT_COACH_ID,
                         )
-                        event_links.append(link)
+                        event_links.append(result["link"])
+                        new_plan_rows.append({
+                            **plan,
+                            "status": "approved",
+                            "event_id": result["event_id"],
+                        })
+
+                    if new_plan_rows:
+                        append_daily_plans(
+                            new_plan_rows,
+                            plan_date=st.session_state.draft_plan_date,
+                            coach_id=DEFAULT_COACH_ID,
+                        )
 
                     st.session_state.draft_plan = None
+                    st.session_state.is_refresh = False
                     st.success(
-                        f"Plan approved! {len(approved)} calendar event(s) created."
+                        f"Plan approved! {len(new_plan_rows)} new calendar event(s) created."
                     )
                     for link in event_links:
                         st.markdown(f"- [View event]({link})")
 
                 except Exception as e:
                     st.error(f"Could not approve plan: {e}")
-
-    st.divider()
 
     st.divider()
 
@@ -330,6 +425,8 @@ else:
                 st.markdown("**Conversation starters:**")
                 for q in result["questions"]:
                     st.markdown(f"- {q}")
+
+    st.divider()
 
     # --- Today's approved sessions with Mark Done ---
     st.markdown("### Today's Approved Sessions")
